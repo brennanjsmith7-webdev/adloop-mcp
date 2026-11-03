@@ -49,6 +49,21 @@ of the same plan. A cross-instance lock surrounds the full confirmation flow.
 Two-phase dry-run validation and the configured `require_dry_run` remain enforced.
 Hosted Merchant read tools never auto-register Google Cloud projects.
 
+### Allowing approved writes
+
+By default, `ADLOOP_WRITE_MODE` is `config`: the existing private JSON configuration
+controls write safety without any override. An operator may explicitly set
+`ADLOOP_WRITE_MODE=approved` and deploy to allow real `confirm_and_apply` calls.
+This overrides only `require_dry_run=false` and `two_phase_apply=true`; budgets,
+blocked operations, authentication, reader restrictions, audit records and replay
+protection are preserved. Every real apply still needs a pending plan and a
+completed dry run. Preview review and user approval remain required.
+
+This setting affects all owner identities on that deployment, not one client or
+plan. Do not enable it without production approval. Unknown or empty modes fail
+closed. To restore the original configuration, remove the variable (or set it to
+`config`) and redeploy. No replacement of the existing JSON Secret is needed.
+
 Before removing a local installation, verify unauthorized access is denied,
 owner and reader tool discovery, reader write denial, durable state across
 instances, Google Ads/GA4 reads, and the separate GBP connection. Do not test

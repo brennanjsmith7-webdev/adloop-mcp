@@ -58,9 +58,11 @@ class EnvironmentCredentialsProvider:
     merchant_credentials = _credentials
 
 
-def load_hosted_config(raw: dict) -> AdLoopConfig:
+def load_hosted_config(raw: dict, *, write_mode: str = "config") -> AdLoopConfig:
     if not isinstance(raw, dict):
         raise ValueError("Hosted configuration must be an object")
+    if write_mode not in {"config", "approved"}:
+        raise ValueError("Unsupported hosted write mode")
     sections = {"google": GoogleConfig, "ga4": GA4Config, "ads": AdsConfig,
                 "gsc": GscConfig, "gtm": GtmConfig, "pagespeed": PageSpeedConfig,
                 "safety": SafetyConfig}
@@ -74,6 +76,10 @@ def load_hosted_config(raw: dict) -> AdLoopConfig:
         raise ValueError("Local audit paths are forbidden in hosted mode")
     values["google"].update(credentials_path="", token_path="")
     values["safety"]["log_file"] = ""
+    if write_mode == "approved":
+        # Explicit operator opt-in, independent of the opaque hosted JSON Secret.
+        # Preserve every other safety setting and require a dry run per plan.
+        values["safety"].update(require_dry_run=False, two_phase_apply=True)
     return AdLoopConfig(**{name: cls(**values[name]) for name, cls in sections.items()},
                         source_path="environment:ADLOOP_HOSTED_CONFIG_JSON")
 
@@ -127,7 +133,10 @@ class HostedApplication:
         set_deployment_mode("server")
         set_default_config(None)
         try:
-            self.config = load_hosted_config(json.loads(os.environ["ADLOOP_HOSTED_CONFIG_JSON"]))
+            self.config = load_hosted_config(
+                json.loads(os.environ["ADLOOP_HOSTED_CONFIG_JSON"]),
+                write_mode=os.environ.get("ADLOOP_WRITE_MODE", "config"),
+            )
             provider = EnvironmentCredentialsProvider(json.loads(os.environ["ADLOOP_GOOGLE_OAUTH_JSON"]))
             self.identities = load_identities(json.loads(os.environ["ADLOOP_ACCESS_KEYS_JSON"]))
             if configure_storage:

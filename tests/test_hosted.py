@@ -32,8 +32,9 @@ def restore_global_runtime():
         runtime.set_deployment_mode(mode)
 
 
-@pytest.fixture
-def hosted(monkeypatch):
+@pytest.fixture(params=['config', 'approved'])
+def hosted(monkeypatch, request):
+    monkeypatch.setenv('ADLOOP_WRITE_MODE', request.param)
     monkeypatch.setenv('ADLOOP_HOSTED_CONFIG_JSON', '{}')
     monkeypatch.setenv('ADLOOP_GOOGLE_OAUTH_JSON', json.dumps({
         'refresh_token': 'fixture', 'client_id': 'fixture', 'client_secret': 'fixture'}))
@@ -145,3 +146,61 @@ def test_safety_config_preserved():
     assert cfg.safety.max_daily_budget == 23
     assert cfg.safety.blocked_operations == ['remove_campaign']
     assert cfg.ga4.property_id == 'properties/123'
+
+
+def test_approved_mode_preserves_private_config_and_other_safety_settings():
+    raw = {'safety': {'require_dry_run': True, 'two_phase_apply': False,
+                     'max_daily_budget': 23, 'max_bid_increase_pct': 12,
+                     'blocked_operations': ['remove_campaign']},
+           'ads': {'customer_id': '1234567890'}, 'ga4': {'property_id': '123'}}
+    original = json.loads(json.dumps(raw))
+    default = load_hosted_config(raw)
+    approved = load_hosted_config(raw, write_mode='approved')
+    assert raw == original
+    assert default.safety.require_dry_run is True
+    assert default.safety.two_phase_apply is False
+    assert approved.safety.require_dry_run is False
+    assert approved.safety.two_phase_apply is True
+    assert approved.safety.max_daily_budget == 23
+    assert approved.safety.max_bid_increase_pct == 12
+    assert approved.safety.blocked_operations == ['remove_campaign']
+    assert approved.ads == default.ads
+    assert approved.ga4 == default.ga4
+    assert approved.google == default.google
+
+
+@pytest.mark.parametrize('mode', ['', 'true', 'APPROVED', 'approve', None])
+def test_invalid_write_mode_rejected(mode):
+    with pytest.raises(ValueError, match='Unsupported hosted write mode'):
+        load_hosted_config({}, write_mode=mode)
+
+
+def test_invalid_write_mode_fails_closed_at_startup(hosted, monkeypatch):
+    monkeypatch.setenv('ADLOOP_WRITE_MODE', 'invalid')
+    app = HostedApplication(FastMCP('fixture'), configure_storage=False)
+    assert app.inner is None
+
+
+def test_approved_mode_still_requires_plan_and_dry_run(tmp_path, monkeypatch):
+    from adloop.ads import write
+    from adloop.safety import preview
+    cfg = load_hosted_config({}, write_mode='approved')
+    cfg.safety.log_file = str(tmp_path / 'audit.log')
+    calls = []
+    monkeypatch.setattr(write, '_execute_plan', lambda *_: calls.append('executed') or {})
+    assert 'error' in write.confirm_and_apply(cfg, plan_id='missing', dry_run=False)
+    plan = preview.ChangePlan(operation='add_keywords', entity_type='keyword',
+                              customer_id='1234567890', changes={})
+    preview.store_plan(plan)
+    refused = write.confirm_and_apply(cfg, plan_id=plan.plan_id, dry_run=False)
+    assert refused['status'] == 'DRY_RUN_REQUIRED'
+    assert calls == []
+    dry_run = write.confirm_and_apply(cfg, plan_id=plan.plan_id, dry_run=True)
+    assert dry_run['status'] == 'DRY_RUN_SUCCESS'
+    assert calls == []
+    applied = write.confirm_and_apply(cfg, plan_id=plan.plan_id, dry_run=False)
+    assert applied['status'] == 'APPLIED'
+    assert calls == ['executed']
+    assert preview.get_plan(plan.plan_id) is None
+    assert 'error' in write.confirm_and_apply(cfg, plan_id=plan.plan_id, dry_run=False)
+    assert calls == ['executed']
