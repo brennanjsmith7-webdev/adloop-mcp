@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from adloop.config import normalize_ga4_property_id
+
 if TYPE_CHECKING:
     from adloop.config import AdLoopConfig
 
@@ -59,6 +61,7 @@ def run_ga4_report(
     if not dimensions and not metrics:
         return {"error": "At least one dimension or metric must be specified."}
 
+    property_id = normalize_ga4_property_id(property_id)
     client = get_data_client(config)
 
     request = RunReportRequest(
@@ -110,6 +113,7 @@ def run_realtime_report(
 
     from adloop.ga4.client import get_data_client
 
+    property_id = normalize_ga4_property_id(property_id)
     client = get_data_client(config)
 
     request = RunRealtimeReportRequest(

@@ -16,13 +16,18 @@ class GoogleConfig:
     token_path: str = "~/.adloop/token.json"
 
 
+def normalize_ga4_property_id(property_id: str) -> str:
+    if property_id and not property_id.startswith("properties/"):
+        return f"properties/{property_id}"
+    return property_id
+
+
 @dataclass
 class GA4Config:
     property_id: str = ""
 
     def __post_init__(self) -> None:
-        if self.property_id and not self.property_id.startswith("properties/"):
-            self.property_id = f"properties/{self.property_id}"
+        self.property_id = normalize_ga4_property_id(self.property_id)
 
 
 @dataclass
