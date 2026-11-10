@@ -12,6 +12,9 @@ server environment variables, never from a user's Mac or interactive login.
 - `GBP_OAUTH_JSON`: separate authorized-user OAuth JSON for Business Profile.
 - `ADLOOP_ACCESS_KEYS_JSON`: identities with `name`, `role`, `tenant` and
   `token_sha256`. Store only SHA-256 digests of strong random client keys here.
+- `ADLOOP_ADDITIONAL_ACCESS_KEYS_JSON`: optional second list in the same format.
+  The deployment validates both lists together and rejects duplicate names or
+  digests. Use it to add identities without replacing the original secret.
 - `ADLOOP_STATE_BACKEND`: explicitly selected durable state provider.
 
 PostgreSQL state uses `ADLOOP_DATABASE_URL`, TLS and a restricted login with
