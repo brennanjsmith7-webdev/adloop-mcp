@@ -138,7 +138,11 @@ class HostedApplication:
                 write_mode=os.environ.get("ADLOOP_WRITE_MODE", "config"),
             )
             provider = EnvironmentCredentialsProvider(json.loads(os.environ["ADLOOP_GOOGLE_OAUTH_JSON"]))
-            self.identities = load_identities(json.loads(os.environ["ADLOOP_ACCESS_KEYS_JSON"]))
+            existing = json.loads(os.environ["ADLOOP_ACCESS_KEYS_JSON"])
+            additional = json.loads(os.environ.get("ADLOOP_ADDITIONAL_ACCESS_KEYS_JSON", "[]"))
+            if not isinstance(existing, list) or not existing or not isinstance(additional, list):
+                raise ValueError("Invalid access key lists")
+            self.identities = load_identities(existing + additional)
             if configure_storage:
                 from adloop.hosted_store import configure_store
                 configure_store()

@@ -84,6 +84,20 @@ async def test_http_auth_and_identity(hosted):
 
 
 @pytest.mark.asyncio
+async def test_additional_keys_preserve_existing_identities(hosted, monkeypatch):
+    monkeypatch.setenv('ADLOOP_ADDITIONAL_ACCESS_KEYS_JSON', json.dumps([
+        {'name': 'codex', 'role': 'owner', 'tenant': 'delvedigital',
+         'token_sha256': hashlib.sha256(b'codex').hexdigest()}
+    ]))
+    app = HostedApplication(FastMCP('additional-keys'), configure_storage=False)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://test') as client:
+        for name, role in [('james', 'reader'), ('brennan', 'owner'), ('codex', 'owner')]:
+            response = await client.get('/identity', headers={'Authorization': f'Bearer {name}'})
+            assert response.status_code == 200
+            assert response.json()['role'] == role
+
+
+@pytest.mark.asyncio
 async def test_mcp_readers_cannot_write_and_context_isolated(hosted):
     async with hosted.inner.router.lifespan_context(hosted.inner):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(hosted), base_url='http://test') as client:
