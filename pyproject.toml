@@ -19,6 +19,7 @@ dependencies = [
     "pyyaml==6.0.3",
     "psycopg[binary]>=3.2,<4",
     "fastapi>=0.117,<1",
+    "redis>=5.2",
 ]
 
 [project.urls]
