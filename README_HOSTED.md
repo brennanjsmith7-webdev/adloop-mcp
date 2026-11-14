@@ -52,6 +52,20 @@ of the same plan. A cross-instance lock surrounds the full confirmation flow.
 Two-phase dry-run validation and the configured `require_dry_run` remain enforced.
 Hosted Merchant read tools never auto-register Google Cloud projects.
 
+### claude.ai custom connectors
+
+claude.ai cannot send custom headers, so `/mcp` also accepts the same access key
+as a `key` query parameter (checked against the same SHA-256 digests and removed
+before the request reaches the MCP app). A present `Authorization` header always
+wins. Vercel SSO protection is passed the same way. Connector URL shape:
+
+```
+https://YOUR-SERVICE.vercel.app/mcp?key=ACCESS_KEY&x-vercel-protection-bypass=BYPASS
+```
+
+Treat that URL as a secret: the key can appear in request logs. Prefer a
+dedicated key for claude.ai so it can be revoked on its own.
+
 ### Allowing approved writes
 
 By default, `ADLOOP_WRITE_MODE` is `config`: the existing private JSON configuration
