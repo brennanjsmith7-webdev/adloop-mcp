@@ -52,19 +52,33 @@ of the same plan. A cross-instance lock surrounds the full confirmation flow.
 Two-phase dry-run validation and the configured `require_dry_run` remain enforced.
 Hosted Merchant read tools never auto-register Google Cloud projects.
 
-### claude.ai custom connectors
+### claude.ai custom connectors (Google sign-in)
 
-claude.ai cannot send custom headers, so `/mcp` also accepts the same access key
-as a `key` query parameter (checked against the same SHA-256 digests and removed
-before the request reaches the MCP app). A present `Authorization` header always
-wins. Vercel SSO protection is passed the same way. Connector URL shape:
+claude.ai connectors authenticate with OAuth, and only accept approved header
+names. Optional Google sign-in runs alongside the bearer keys (which keep working
+for Codex and Claude Code). It is enabled only when all of these are set:
 
-```
-https://YOUR-SERVICE.vercel.app/mcp?key=ACCESS_KEY&x-vercel-protection-bypass=BYPASS
-```
+- `ADLOOP_OAUTH_GOOGLE_CLIENT_ID` / `ADLOOP_OAUTH_GOOGLE_CLIENT_SECRET` (sensitive):
+  a Google OAuth client of type *Web application* with authorized redirect URI
+  `https://YOUR-SERVICE.vercel.app/auth/callback`.
+- `ADLOOP_PUBLIC_URL`: the public base URL, e.g. `https://YOUR-SERVICE.vercel.app`.
+- `ADLOOP_OAUTH_USERS_JSON`: allowed Google accounts, e.g.
+  `[{"email": "info@example.com", "name": "brennan-google", "role": "owner", "tenant": "delvedigital"}]`.
+  Only verified emails listed here are admitted; everyone else gets 401.
+- `REDIS_URL`: OAuth client registrations and upstream tokens are stored there,
+  encrypted with a key derived from the client secret, under `adloop-oauth` collections.
 
-Treat that URL as a secret: the key can appear in request logs. Prefer a
-dedicated key for claude.ai so it can be revoked on its own.
+Clients may register only claude.ai/claude.com callbacks or loopback redirects.
+OAuth discovery and sign-in pages must be publicly reachable, so Vercel
+Authentication cannot cover the production domain when sign-in is in use. A
+broken OAuth configuration disables sign-in but never the bearer keys.
+
+In claude.ai: Add custom connector → URL `https://YOUR-SERVICE.vercel.app/mcp`
+→ *Sign in now* → sign in with the listed Google account.
+
+Header-less clients can alternatively pass an access key as `?key=` (checked
+against the same digests and stripped before the MCP app); treat such a URL as a
+secret because it can appear in request logs.
 
 ### Allowing approved writes
 

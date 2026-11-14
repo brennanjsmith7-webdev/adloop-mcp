@@ -12,9 +12,10 @@ from dataclasses import dataclass
 
 from fastmcp.server.middleware import Middleware
 from fastmcp.exceptions import ToolError
+from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 
-from adloop import auth
+from adloop import auth, hosted_oauth
 from adloop.config import (AdLoopConfig, GoogleConfig, GA4Config, AdsConfig,
                            GscConfig, GtmConfig, PageSpeedConfig, SafetyConfig)
 from adloop.runtime import set_deployment_mode, set_default_config, use_runtime
@@ -127,8 +128,11 @@ class ReaderPolicy(Middleware):
 
 
 class HostedApplication:
-    def __init__(self, server=None, *, configure_storage=True):
+    def __init__(self, server=None, *, configure_storage=True, oauth_storage=None):
         self.inner = None
+        self.oauth = None
+        self.oauth_app = None
+        self.oauth_users = {}
         self.config = None
         self.identities = []
         set_deployment_mode("server")
@@ -156,6 +160,32 @@ class HostedApplication:
         except Exception:
             # No exception details: configuration errors can contain secrets.
             self.inner = None
+        if self.inner is not None and hosted_oauth.oauth_configured(os.environ):
+            # Google sign-in is optional and independent: a broken OAuth
+            # configuration disables sign-in but never the existing access keys.
+            try:
+                self.oauth_users = hosted_oauth.load_oauth_users(
+                    json.loads(os.environ.get(hosted_oauth.USERS_ENV, "[]")), Identity)
+                self.oauth = hosted_oauth.build_google_provider(os.environ, storage=oauth_storage)
+                self.oauth_app = Starlette(routes=self.oauth.get_routes(mcp_path="/mcp"))
+                self.resource_metadata_url = (
+                    f"{os.environ[hosted_oauth.PUBLIC_URL_ENV].rstrip('/')}"
+                    "/.well-known/oauth-protected-resource/mcp")
+            except Exception:
+                self.oauth = self.oauth_app = None
+                self.oauth_users = {}
+
+    async def _oauth_actor(self, token: str):
+        if self.oauth is None or not token:
+            return None
+        try:
+            access = await self.oauth.load_access_token(token)
+        except Exception:
+            return None
+        claims = getattr(access, "claims", None) or {}
+        if claims.get("email_verified") not in (True, "true", "True"):
+            return None
+        return self.oauth_users.get(str(claims.get("email", "")).lower())
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "lifespan":
@@ -175,6 +205,9 @@ class HostedApplication:
                                       status_code=200 if self.inner else 503)(scope, receive, send)
         if self.inner is None:
             return await JSONResponse({"error": "Service unavailable"}, status_code=503)(scope, receive, send)
+        if self.oauth_app is not None and scope["path"] not in ("/mcp", "/mcp/", "/identity"):
+            # OAuth discovery, registration, authorize, callback, consent and token routes.
+            return await self.oauth_app(scope, receive, send)
         headers = [v for k, v in scope.get("headers", []) if k.lower() == b"authorization"]
         candidate = None
         if len(headers) == 1:
@@ -196,9 +229,16 @@ class HostedApplication:
             for identity in self.identities:
                 if hmac.compare_digest(digest, identity.token_sha256):
                     actor = identity
+            if actor is None and candidate.count(".") == 2:
+                actor = await self._oauth_actor(candidate)
         if actor is None:
+            challenge = "Bearer"
+            if self.oauth is not None:
+                challenge = f'Bearer resource_metadata="{self.resource_metadata_url}"'
+                if candidate:
+                    challenge += ', error="invalid_token"'
             return await JSONResponse({"error": "Unauthorized"}, status_code=401,
-                                      headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
+                                      headers={"WWW-Authenticate": challenge})(scope, receive, send)
         token = _actor.set(actor)
         try:
             with use_runtime(self.config, tenant=f"{actor.tenant}:{actor.name}"):
