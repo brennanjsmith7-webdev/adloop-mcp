@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+from urllib.parse import parse_qsl, urlencode
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -175,15 +176,26 @@ class HostedApplication:
         if self.inner is None:
             return await JSONResponse({"error": "Service unavailable"}, status_code=503)(scope, receive, send)
         headers = [v for k, v in scope.get("headers", []) if k.lower() == b"authorization"]
-        actor = None
+        candidate = None
         if len(headers) == 1:
-            value = headers[0].decode("latin1")
-            scheme, _, token = value.partition(" ")
-            if scheme.lower() == "bearer" and token and len(token) <= 4096:
-                digest = hashlib.sha256(token.encode()).hexdigest()
-                for identity in self.identities:
-                    if hmac.compare_digest(digest, identity.token_sha256):
-                        actor = identity
+            scheme, _, value = headers[0].decode("latin1").partition(" ")
+            if scheme.lower() == "bearer":
+                candidate = value
+        # Clients that cannot send headers (claude.ai custom connectors) may pass
+        # the same access key as ?key=. It is removed before the MCP app sees it.
+        query = parse_qsl(scope.get("query_string", b"").decode("latin1"), keep_blank_values=True)
+        url_keys = [v for k, v in query if k == "key"]
+        if url_keys:
+            scope = dict(scope, query_string=urlencode(
+                [(k, v) for k, v in query if k != "key"]).encode("latin1"))
+            if not headers and len(url_keys) == 1:
+                candidate = url_keys[0]
+        actor = None
+        if candidate and len(candidate) <= 4096:
+            digest = hashlib.sha256(candidate.encode()).hexdigest()
+            for identity in self.identities:
+                if hmac.compare_digest(digest, identity.token_sha256):
+                    actor = identity
         if actor is None:
             return await JSONResponse({"error": "Unauthorized"}, status_code=401,
                                       headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)

@@ -84,6 +84,34 @@ async def test_http_auth_and_identity(hosted):
 
 
 @pytest.mark.asyncio
+async def test_url_key_for_header_less_clients(hosted):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(hosted), base_url='http://test') as client:
+        assert (await client.get('/identity?key=bad')).status_code == 401
+        assert (await client.get('/identity?key=')).status_code == 401
+        assert (await client.get('/identity?key=brennan&key=james')).status_code == 401
+        ok = await client.get('/identity?x-vercel-protection-bypass=x&key=james')
+        assert ok.status_code == 200 and ok.json()['role'] == 'reader'
+        # A present Authorization header always wins over the URL key.
+        bad_header = await client.get('/identity?key=brennan', headers={'Authorization': 'Bearer bad'})
+        assert bad_header.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_url_key_not_forwarded_to_mcp_app(hosted):
+    seen = {}
+    inner = hosted.inner
+
+    async def spy(scope, receive, send):
+        seen['qs'] = scope['query_string']
+        return await inner(scope, receive, send)
+
+    hosted.inner = spy
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(hosted), base_url='http://test') as client:
+        await client.get('/mcp?a=1&key=brennan')
+    assert seen['qs'] == b'a=1'
+
+
+@pytest.mark.asyncio
 async def test_additional_keys_preserve_existing_identities(hosted, monkeypatch):
     monkeypatch.setenv('ADLOOP_ADDITIONAL_ACCESS_KEYS_JSON', json.dumps([
         {'name': 'codex', 'role': 'owner', 'tenant': 'delvedigital',
